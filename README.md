@@ -1,64 +1,84 @@
-# Alpha Zero General (any game, any framework!)
-A simplified, highly flexible, commented and (hopefully) easy to understand implementation of self-play based reinforcement learning based on the AlphaGo Zero paper (Silver et al). It is designed to be easy to adopt for any two-player turn-based adversarial game and any deep learning framework of your choice. A sample implementation has been provided for the game of Othello in PyTorch and Keras. An accompanying tutorial can be found [here](https://suragnair.github.io/posts/alphazero.html). We also have implementations for many other games like GoBang and TicTacToe.
+# NYPC Yacht Auction AI Agent
 
-To use a game of your choice, subclass the classes in ```Game.py``` and ```NeuralNet.py``` and implement their functions. Example implementations for Othello can be found in ```othello/OthelloGame.py``` and ```othello/{pytorch,keras}/NNet.py```. 
+An AI agent implementation for the NYPC Yacht Auction game using reinforcement learning techniques based on the AlphaZero algorithm. This project creates an intelligent agent capable of playing the yacht-auction dice game through self-play training and Monte Carlo Tree Search.
 
-```Coach.py``` contains the core training loop and ```MCTS.py``` performs the Monte Carlo Tree Search. The parameters for the self-play can be specified in ```main.py```. Additional neural network parameters are in ```othello/{pytorch,keras}/NNet.py``` (cuda flag, batch size, epochs, learning rate etc.). 
+## Game Overview
 
-To start training a model for Othello:
+The yacht auction game is a two-player strategic dice game consisting of 13 rounds with bidding and scoring phases:
+
+- **Bidding Phase**: Players bid on dice bundles (A or B) with strategic risk-reward mechanics
+- **Scoring Phase**: Players choose dice to score in various categories (basic face values, combinations like Full House, Straight, Yacht)
+- **Victory Condition**: Highest total score after 13 rounds wins
+
+For complete game rules, see [`INSTRUCTION.md`](INSTRUCTION.md).
+
+## Project Structure
+
+### Core Framework Files
+- `Game.py` - Abstract game interface that will be implemented for yacht auction
+- `NeuralNet.py` - Neural network interface for the AI agent
+- `MCTS.py` - Monte Carlo Tree Search implementation
+- `Coach.py` - Training loop for self-play reinforcement learning
+- `Arena.py` - Game arena for evaluating different agents
+- `pit.py` - Interface for human vs AI gameplay
+- `main.py` - Main training script
+- `utils.py` - Utility functions
+
+### Game-Specific Files (To Be Implemented)
+- `yacht/` - Directory for yacht auction game implementation
+  - `YachtGame.py` - Game logic and rules
+  - `YachtPlayers.py` - Human and AI player implementations
+  - `YachtNNet.py` - Neural network architecture
+
+## Getting Started
+
+### Prerequisites
+Install required dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+### Training an AI Agent
+1. Implement the yacht auction game logic in the `yacht/` directory
+2. Configure training parameters in `main.py`
+3. Start training:
 ```bash
 python main.py
 ```
-Choose your framework and game in ```main.py```.
 
-### Docker Installation
-For easy environment setup, we can use [nvidia-docker](https://github.com/NVIDIA/nvidia-docker). Once you have nvidia-docker set up, we can then simply run:
-```
-./setup_env.sh
-```
-to set up a (default: pyTorch) Jupyter docker container. We can now open a new terminal and enter:
-```
-docker exec -ti pytorch_notebook python main.py
+### Playing Against the AI
+After training, use the pit interface to play against your trained agent:
+```bash
+python pit.py
 ```
 
-### Experiments
-We trained a PyTorch model for 6x6 Othello (~80 iterations, 100 episodes per iteration and 25 MCTS simulations per turn). This took about 3 days on an NVIDIA Tesla K80. The pretrained model (PyTorch) can be found in ```pretrained_models/othello/pytorch/```. You can play a game against it using ```pit.py```. Below is the performance of the model against a random and a greedy baseline with the number of iterations.
-![alt tag](https://github.com/suragnair/alpha-zero-general/raw/master/pretrained_models/6x6.png)
+## Implementation Status
 
-A concise description of our algorithm can be found [here](https://github.com/suragnair/alpha-zero-general/raw/master/pretrained_models/writeup.pdf).
+🔄 **In Progress**: 
+- Game logic implementation
+- Neural network architecture design
+- Training configuration
 
-### Citation
+📋 **To Do**:
+- Complete yacht auction game rules implementation
+- Design state representation for neural network
+- Implement bidding and scoring strategy evaluation
+- Train and evaluate AI agents
 
-If you found this work useful, feel free to cite it as
+## Technical Approach
 
-```
-@misc{thakoor2016learning,
-  title={Learning to play othello without human knowledge},
-  author={Thakoor, Shantanu and Nair, Surag and Jhunjhunwala, Megha},
-  year={2016},
-  publisher={Stanford University, Final Project Report}
-}
-```
+This implementation uses:
+- **Self-Play Training**: The AI learns by playing against itself
+- **Monte Carlo Tree Search**: For strategic move evaluation during gameplay
+- **Neural Networks**: To evaluate board positions and suggest moves
+- **Experience Replay**: To improve learning from historical games
 
-### Contributing
-While the current code is fairly functional, we could benefit from the following contributions:
-* Game logic files for more games that follow the specifications in ```Game.py```, along with their neural networks
-* Neural networks in other frameworks
-* Pre-trained models for different game configurations
-* An asynchronous version of the code- parallel processes for self-play, neural net training and model comparison. 
-* Asynchronous MCTS as described in the paper
+The agent will learn optimal bidding strategies, dice selection for scoring, and long-term game planning through thousands of self-play iterations.
 
-Some extensions have been implented [here](https://github.com/kevaday/alphazero-general).
+## License
 
-### Contributors and Credits
-* [Shantanu Thakoor](https://github.com/ShantanuThakoor) and [Megha Jhunjhunwala](https://github.com/jjw-megha) helped with core design and implementation.
-* [Shantanu Kumar](https://github.com/SourKream) contributed TensorFlow and Keras models for Othello.
-* [Evgeny Tyurin](https://github.com/evg-tyurin) contributed rules and a trained model for TicTacToe.
-* [MBoss](https://github.com/1424667164) contributed rules and a model for GoBang.
-* [Jernej Habjan](https://github.com/JernejHabjan) contributed RTS game.
-* [Adam Lawson](https://github.com/goshawk22) contributed rules and a trained model for 3D TicTacToe.
-* [Carlos Aguayo](https://github.com/carlos-aguayo) contributed rules and a trained model for Dots and Boxes along with a [JavaScript implementation](https://github.com/carlos-aguayo/carlos-aguayo.github.io/tree/master/alphazero).
-* [Robert Ronan](https://github.com/rlronan) contributed rules for Santorini.
-* [Plamen Totev](https://github.com/plamentotev) contributed Go Text Protocol player for Othello.
+This project maintains the original license. See [`LICENSE`](LICENSE) for details.
 
-Note: Chainer and TensorFlow v1 versions have been removed but can be found prior to commit [2ad461c](https://github.com/suragnair/alpha-zero-general/tree/2ad461c393ecf446e76f6694b613e394b8eb652f).
+## Acknowledgments
+
+Built upon the Alpha Zero General framework originally developed for games like Othello, adapted specifically for the yacht auction game domain.

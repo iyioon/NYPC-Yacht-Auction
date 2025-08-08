@@ -1,0 +1,16 @@
+[FIRST "COMMAND: C:/Users/Jason/Desktop/NYPC-Yacht-Auction/.venv/Scripts/python.exe yacht/agents/run_trained_agent.py"]
+[SECOND "COMMAND: C:/Users/Jason/Desktop/NYPC-Yacht-Auction/.venv/Scripts/python.exe yacht/agents/run_heuristic_agent.py"]
+[RESULT "1-0"]
+ROUND 1
+ROLL 12345 65432
+BID FIRST B 0
+BID SECOND B 0
+GET FIRST B
+GET SECOND A
+ROUND 2
+ROLL 23456 54321
+BID FIRST A 60000
+BID SECOND A 0
+GET FIRST A
+GET SECOND B
+ABORT SECOND NO SUCH DICE
