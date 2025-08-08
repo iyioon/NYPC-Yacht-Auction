@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Script to run the heuristic baseline agent for evaluation.
+Runner script for the heuristic agent.
+This script runs the rule-based heuristic agent as a baseline.
 """
 
 import sys
 import os
 
-# Add the project root to the Python path
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, project_root)
+# Add the yacht package to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+# Import the heuristic agent
 from yacht.agents.agent import main
 
 if __name__ == '__main__':

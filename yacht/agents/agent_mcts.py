@@ -70,7 +70,8 @@ class MCTS:
         for _ in range(num_sims):
             self.search(board, player)
         s = self.game.stringRepresentation(board)
-        counts = np.array([self.Nsa.get((s, a), 0) for a in range(self.game.getActionSize())], dtype=np.float32)
+        counts = np.array([self.Nsa.get((s, a), 0) for a in range(
+            self.game.getActionSize())], dtype=np.float32)
         if temp == 0:
             # Deterministic: choose the move with the highest visit count
             best_actions = np.argwhere(counts == np.max(counts)).flatten()
@@ -122,7 +123,8 @@ class MCTS:
             if self.Vs[s][a] == 0:
                 continue
             if (s, a) in self.Qsa:
-                u = self.Qsa[(s, a)] + self.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s]) / (1 + self.Nsa[(s, a)])
+                u = self.Qsa[(s, a)] + self.cpuct * self.Ps[s][a] * \
+                    math.sqrt(self.Ns[s]) / (1 + self.Nsa[(s, a)])
             else:
                 u = self.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + 1e-8)
             if u > best_ucb:
@@ -135,7 +137,8 @@ class MCTS:
         v = self.search(next_board, next_player)
         # Update Qsa and Nsa
         if (s, a) in self.Qsa:
-            self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
+            self.Qsa[(s, a)] = (self.Nsa[(s, a)] *
+                                self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
             self.Nsa[(s, a)] += 1
         else:
             self.Qsa[(s, a)] = v
@@ -206,15 +209,12 @@ def find_subset_index(dice_pool: List[int], selected: List[int], subsets: List[T
 def main() -> None:
     game = Game()
     nnet = NNetWrapper(game)
-    # Load trained model from the checkpoint directory
+    # Load trained model from data.bin
     try:
-        nnet.load_checkpoint('./temp', 'best.pth.tar')
-    except Exception as e:
-        # If loading fails, try alternate names or proceed with uninitialised network
-        try:
-            nnet.load_checkpoint('.', 'data.bin')
-        except Exception:
-            print(f"Warning: Could not load trained model: {e}", file=sys.stderr)
+        nnet.load_checkpoint('.', 'data.bin')
+    except Exception:
+        # If loading fails, we proceed with an uninitialised network
+        pass
     # Instantiate MCTS with reasonable cpuct
     mcts = MCTS(game, nnet, cpuct=1.0)
     # Initialise game state
@@ -244,7 +244,8 @@ def main() -> None:
                 board['bundle_b'] = [int(c) for c in str_b]
                 # MCTS decision on bidding action
                 # Use temperature 0 to choose deterministically
-                probs = mcts.get_action_prob(board, player, temp=0, num_sims=50)
+                probs = mcts.get_action_prob(
+                    board, player, temp=0, num_sims=50)
                 # Mask to bidding actions
                 valid = game.getValidMoves(board, player)
                 probs = probs * valid
@@ -276,14 +277,17 @@ def main() -> None:
                 opp_choice = 0 if opp_group_char == 'A' else 1
                 # Determine closest bid level index
                 opp_bid_idx = nearest_bid_index(game.bid_levels, opp_amount)
-                opponent_action = opp_choice * len(game.bid_levels) + opp_bid_idx
+                opponent_action = opp_choice * \
+                    len(game.bid_levels) + opp_bid_idx
                 # Update board/state with opponent's bidding action
-                board, player = game.getNextState(board, player, opponent_action)
+                board, player = game.getNextState(
+                    board, player, opponent_action)
                 board = game.getCanonicalForm(board, player)
                 continue
             if command == 'SCORE':
                 # Our turn to select scoring action
-                probs = mcts.get_action_prob(board, player, temp=0, num_sims=50)
+                probs = mcts.get_action_prob(
+                    board, player, temp=0, num_sims=50)
                 # Mask to scoring actions
                 valid = game.getValidMoves(board, player)
                 probs = probs * valid
@@ -292,7 +296,8 @@ def main() -> None:
                     # fallback: choose first valid scoring action
                     scoring_actions = np.where(valid == 1)[0]
                     # Exclude bidding actions
-                    scoring_actions = [a for a in scoring_actions if a >= game.num_bid_actions]
+                    scoring_actions = [
+                        a for a in scoring_actions if a >= game.num_bid_actions]
                     action = int(random.choice(scoring_actions))
                 else:
                     action = int(np.argmax(probs))
@@ -303,14 +308,32 @@ def main() -> None:
                 subset = game.subsets[subset_idx]
                 # Get current player's dice (always dice0 in canonical form)
                 dice_pool = board['dice0']
-                chosen_dice_vals = [dice_pool[i] for i in subset if i < len(dice_pool)]
+
+                # Validate and adjust subset to ensure it's compatible with dice pool
+                if max(subset) >= len(dice_pool):
+                    # Find a valid subset for current pool size
+                    valid_subsets = [
+                        s for s in game.subsets if max(s) < len(dice_pool)]
+                    if valid_subsets:
+                        subset = valid_subsets[0]
+                        # Recalculate subset_idx to match the corrected subset
+                        subset_idx = game.subset_to_index[subset]
+                    else:
+                        # Pool has fewer than 5 dice, use all available
+                        subset = tuple(range(len(dice_pool)))
+                        if subset in game.subset_to_index:
+                            subset_idx = game.subset_to_index[subset]
+
+                chosen_dice_vals = [dice_pool[i] for i in subset]
                 # Update board via getNextState
                 board, player = game.getNextState(board, player, action)
                 board = game.getCanonicalForm(board, player)
                 # Output scoring decision
                 # Map category index back to name
-                category_name = [k for k, v in _CATEGORY_MAP.items() if v == cat][0]
-                print(f'PUT {category_name} {"".join(map(str, chosen_dice_vals))}')
+                category_name = [
+                    k for k, v in _CATEGORY_MAP.items() if v == cat][0]
+                print(
+                    f'PUT {category_name} {"".join(map(str, chosen_dice_vals))}')
                 sys.stdout.flush()
                 continue
             if command == 'SET':
@@ -321,13 +344,16 @@ def main() -> None:
                 # Determine subset index for opponent's dice selection
                 # In canonical board, opponent's dice are stored in dice1
                 opp_dice_pool = board['dice1']
-                subset_idx = find_subset_index(opp_dice_pool, selected_dice, game.subsets)
+                subset_idx = find_subset_index(
+                    opp_dice_pool, selected_dice, game.subsets)
                 if subset_idx < 0:
                     # If no matching subset found, choose first possible subset (fallback)
                     # Find any subset whose values match selected dice length
                     subset_idx = 0
-                opponent_action = game.num_bid_actions + opp_cat * game.num_dice_subsets + subset_idx
-                board, player = game.getNextState(board, player, opponent_action)
+                opponent_action = game.num_bid_actions + \
+                    opp_cat * game.num_dice_subsets + subset_idx
+                board, player = game.getNextState(
+                    board, player, opponent_action)
                 board = game.getCanonicalForm(board, player)
                 continue
             if command == 'FINISH':

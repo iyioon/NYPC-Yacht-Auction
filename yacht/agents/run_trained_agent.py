@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Script to run the trained neural network agent for evaluation.
-This loads the best checkpoint from training and uses MCTS for decision making.
+Runner script for the trained MCTS agent.
+This script loads the trained neural network and runs the MCTS agent.
 """
 
 import sys
 import os
 
-# Add the project root to the Python path
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, project_root)
+# Add the yacht package to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+# Import the MCTS agent
 from yacht.agents.agent_mcts import main
 
 if __name__ == '__main__':

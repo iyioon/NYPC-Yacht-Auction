@@ -47,8 +47,10 @@ class Game:
         self.n_actions = self.num_bid_actions + self.num_score_actions
 
         # Precompute all 5‑dice subsets of 10 positions and mapping to indices
-        self.subsets: List[Tuple[int, ...]] = list(itertools.combinations(range(10), 5))
-        self.subset_to_index = {subset: i for i, subset in enumerate(self.subsets)}
+        self.subsets: List[Tuple[int, ...]] = list(
+            itertools.combinations(range(10), 5))
+        self.subset_to_index = {subset: i for i,
+                                subset in enumerate(self.subsets)}
 
         # Vector length for board representation
         # Breakdown: round (13), phase (2), dice0 (70), dice1 (70), bundles (70),
@@ -83,7 +85,8 @@ class Game:
             'player': 0,            # 0 or 1 (0 starts bidding)
             'dice0': [],            # dice pool for player 0
             'dice1': [],            # dice pool for player 1
-            'scores0': [0] * self.num_categories,  # scores for player 0 (0 if unused)
+            # scores for player 0 (0 if unused)
+            'scores0': [0] * self.num_categories,
             'scores1': [0] * self.num_categories,  # scores for player 1
             'used0': [False] * self.num_categories,  # used flags for player 0
             'used1': [False] * self.num_categories,  # used flags for player 1
@@ -92,7 +95,8 @@ class Game:
             'bundle_a': bundle_a,   # current bundle A
             'bundle_b': bundle_b,   # current bundle B
             'pending': None,       # pending bid action (dict) or None
-            'pending_scoring': None  # pending scoring player index (0 or 1) or None
+            # pending scoring player index (0 or 1) or None
+            'pending_scoring': None
         }
         return board
 
@@ -169,7 +173,8 @@ class Game:
             targeted[first_bid['player']] = first_bid['choice']
             targeted[second_bid['player']] = second_bid['choice']
             # Determine winner of contested bundle if both target same
-            assignment = [None, None]  # assigned bundle for each player (0 for A, 1 for B)
+            # assigned bundle for each player (0 for A, 1 for B)
+            assignment = [None, None]
             if targeted[0] != targeted[1]:
                 # Different targets: each gets what they chose
                 assignment[0] = targeted[0]
@@ -213,7 +218,8 @@ class Game:
                 # Round 1 has no scoring; move directly to next bidding round
                 state['round'] = 2
                 state['phase'] = 'bid'
-                state['player'] = 0  # Start next round with player 0 (arbitrary)
+                # Start next round with player 0 (arbitrary)
+                state['player'] = 0
                 # Generate new bundles
                 state['bundle_a'] = [random.randint(1, 6) for _ in range(5)]
                 state['bundle_b'] = [random.randint(1, 6) for _ in range(5)]
@@ -221,7 +227,8 @@ class Game:
                 # Prepare for scoring phase
                 state['phase'] = 'score'
                 # Determine who scores first: alternate by round to keep fairness
-                state['player'] = state['round'] % 2  # player 0 scores first on even rounds
+                # player 0 scores first on even rounds
+                state['player'] = state['round'] % 2
                 state['pending_scoring'] = None
             # Return next state and next player indicator (-player flips sign)
             return state, -player
@@ -286,12 +293,15 @@ class Game:
                     state['phase'] = 'bid'
                     state['player'] = 0  # Start bidding with player 0
                     # Generate new bundles
-                    state['bundle_a'] = [random.randint(1, 6) for _ in range(5)]
-                    state['bundle_b'] = [random.randint(1, 6) for _ in range(5)]
+                    state['bundle_a'] = [
+                        random.randint(1, 6) for _ in range(5)]
+                    state['bundle_b'] = [
+                        random.randint(1, 6) for _ in range(5)]
                 elif state['round'] == 13:
                     # Final round: no more bidding; just scoring
                     state['phase'] = 'score'
-                    state['player'] = state['round'] % 2  # alternate starting scorer
+                    # alternate starting scorer
+                    state['player'] = state['round'] % 2
                 else:
                     # Game ends after final scoring
                     state['phase'] = 'end'
@@ -332,11 +342,20 @@ class Game:
                     continue
                 # Determine subsets of positions
                 if n < 5:
-                    # Use a single subset of all positions
-                    subsets_indices = [self.subset_to_index[tuple(range(n))]]
+                    # For fewer than 5 dice, only allow subset of all available positions
+                    target_subset = tuple(range(n))
+                    if target_subset in self.subset_to_index:
+                        subsets_indices = [self.subset_to_index[target_subset]]
+                    else:
+                        # This should not happen, but provide fallback
+                        subsets_indices = [0]
+                elif n == 5:
+                    # Exactly 5 dice, use subset (0,1,2,3,4)
+                    subsets_indices = [self.subset_to_index[(0, 1, 2, 3, 4)]]
                 else:
                     # Use precomputed subsets whose max index < n
-                    subsets_indices = [i for i, s in enumerate(self.subsets) if max(s) < n]
+                    subsets_indices = [i for i, s in enumerate(
+                        self.subsets) if max(s) < n]
                 # Mark corresponding actions as valid
                 base = self.num_bid_actions + cat * self.num_dice_subsets
                 for sub_i in subsets_indices:
@@ -428,7 +447,7 @@ class Game:
         """
         # Convert the board to a unique string via its vector representation
         vec = self._board_to_vector(board)
-        return ''.join(map(lambda x: format(int(x*1000), '03d'), vec))
+        return ''.join(map(lambda x: format(int(x * 1000), '03d'), vec))
 
     # --------------------------- Helper Functions ---------------------------
     def _calculate_category_score(self, cat: int, dice: List[int]) -> int:
@@ -466,12 +485,14 @@ class Game:
         # Small straight
         if cat == 9:
             e = [dice.count(i) > 0 for i in range(1, 7)]
-            ok = (e[0] and e[1] and e[2] and e[3]) or (e[1] and e[2] and e[3] and e[4]) or (e[2] and e[3] and e[4] and e[5])
+            ok = (e[0] and e[1] and e[2] and e[3]) or (e[1] and e[2]
+                                                       and e[3] and e[4]) or (e[2] and e[3] and e[4] and e[5])
             return 15000 if ok else 0
         # Large straight
         if cat == 10:
             e = [dice.count(i) > 0 for i in range(1, 7)]
-            ok = (e[0] and e[1] and e[2] and e[3] and e[4]) or (e[1] and e[2] and e[3] and e[4] and e[5])
+            ok = (e[0] and e[1] and e[2] and e[3] and e[4]) or (
+                e[1] and e[2] and e[3] and e[4] and e[5])
             return 30000 if ok else 0
         # Yacht
         if cat == 11:
@@ -560,7 +581,8 @@ class Game:
             # Bid index one-hot (9 bits)
             # Determine bid index corresponding to bid amount
             try:
-                bidx = self.bid_levels.index(board['pending']['bid_amount'] // 1000)
+                bidx = self.bid_levels.index(
+                    board['pending']['bid_amount'] // 1000)
             except ValueError:
                 bidx = 0
             for i in range(len(self.bid_levels)):

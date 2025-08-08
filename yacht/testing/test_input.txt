@@ -1,3 +1,7 @@
+# Test input for yacht auction game evaluation
+# Format: diceA diceB tieBreaker (12 lines for rounds 1-12)
+# Each line: 5-digit dice values for bundle A, 5-digit dice values for bundle B, tie-breaker (0 or 1)
+
 12345 65432 0
 23456 54321 1
 34561 43216 0

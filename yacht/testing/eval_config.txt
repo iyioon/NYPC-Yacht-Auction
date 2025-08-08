@@ -1,7 +1,7 @@
 # Evaluation configuration for yacht auction agents
 # Format: KEY=VALUE
 
-INPUT=yacht/testing/test_input.txt
-LOG=yacht/testing/evaluation_results.log
+INPUT=test_input.txt
+LOG=evaluation_results.log
 EXEC1=C:/Users/Jason/Desktop/NYPC-Yacht-Auction/.venv/Scripts/python.exe yacht/agents/run_trained_agent.py
 EXEC2=C:/Users/Jason/Desktop/NYPC-Yacht-Auction/.venv/Scripts/python.exe yacht/agents/run_heuristic_agent.py
