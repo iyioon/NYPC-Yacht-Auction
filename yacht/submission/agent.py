@@ -100,87 +100,88 @@ def _pad_scale(dice, n):
     return arr
 
 
-def _encode_state(game_state, round_no, phase, rollA, rollB, p1_bid, p2_bid, current_player):
-    """Encode game state into neural network input vector (59 features)"""
-    # Determine which player's perspective
-    if current_player == 1:
-        me, opp = game_state.my_state, game_state.opp_state
-    else:
-        me, opp = game_state.opp_state, game_state.my_state
+def _mask_bits(mask, n):
+    """Convert bitmask to array - matches training exactly"""
+    return np.array([(mask >> i) & 1 for i in range(n)], dtype=np.float32)
 
-    # Encode features
+
+def _encode_state(game_state, round_no, phase, rollA, rollB, p1_bid, p2_bid, current_player):
+    """Encode game state into neural network input vector (59 features) - MATCHES TRAINING EXACTLY"""
+    # Always canonical form - current player is always "me" (player 1 perspective)
+    me, opp = game_state.my_state, game_state.opp_state
+
+    # Encode features in EXACT order as training
     features = []
 
-    # Round/phase info (3 features)
-    features.append(round_no / 13.0)  # normalize round
-    features.append(float(phase))     # 0 for bid, 1 for score
-    features.append(float(current_player))  # 1 or -1
+    # Round/phase info (3 features) - EXACT match with training
+    features.append(round_no / 13.0)                    # normalized round
+    # is_bid (1.0 during bidding)
+    features.append(1.0 if phase == 0 else 0.0)
+    # is_score (1.0 during scoring)
+    features.append(1.0 if phase == 1 else 0.0)
 
-    # My dice (10 features) - pad with -1 if fewer than 10
-    features.extend(_pad_scale(me.dice, 10))
+    # My 10 dice slots (10 features) - use carry (matches training)
+    features.extend(_pad_scale(me.carry, 10))
 
-    # Opponent dice count approximation (10 features) - we don't know exact dice
-    opp_dice_count = len(opp.dice)
-    opp_dice_approx = [3.5] * min(opp_dice_count, 10) + \
-        [0] * max(0, 10 - opp_dice_count)
-    features.extend(_pad_scale(opp_dice_approx, 10))
+    # Opponent 10 dice slots (10 features) - use actual opponent dice
+    features.extend(_pad_scale(opp.carry, 10))
 
-    # Roll A and B (10 features)
-    features.extend(_pad_scale(rollA, 5))
-    features.extend(_pad_scale(rollB, 5))
+    # Current rolls (10 features) - EXACT logic from training
+    # Only show rolls if bidding phase AND not round 13
+    if phase == 0 and round_no != 13:
+        features.extend(_pad_scale(rollA, 5))
+        features.extend(_pad_scale(rollB, 5))
+    else:
+        features.extend([-1.0] * 10)  # Pad with -1 when not visible
 
-    # My used categories mask (12 features)
-    for i in range(NUM_CATEGORIES):
-        features.append(1.0 if me.rule_score[i] is not None else 0.0)
+    # Used categories masks (24 features) - use bitmask like training EXACTLY
+    features.extend(_mask_bits(me.used_mask, 12))
+    features.extend(_mask_bits(opp.used_mask, 12))
 
-    # Opponent used categories mask (12 features)
-    for i in range(NUM_CATEGORIES):
-        features.append(1.0 if opp.rule_score[i] is not None else 0.0)
+    # Bid scores (2 features) - EXACT scaling like training
+    features.append(me.bid_score * 1e-5)
+    features.append(opp.bid_score * 1e-5)
 
-    # Bid info (2 features)
-    my_bid_amount = (p1_bid[1] if current_player ==
-                     1 else p2_bid[1]) / 100000.0 if phase == 0 else 0.0
-    opp_bid_amount = (p2_bid[1] if current_player ==
-                      1 else p1_bid[1]) / 100000.0 if phase == 0 else 0.0
-    features.append(my_bid_amount)
-    features.append(opp_bid_amount)
-
+    assert len(
+        features) == 59, f"Feature vector length mismatch: {len(features)} != 59"
     return np.array(features, dtype=np.float32)
 
 
 def _decode_action(action_idx, game_state, round_no, phase):
-    """Decode action index back to game move"""
+    """Decode action index back to game move - MATCHES TRAINING EXACTLY"""
     if phase == 0:  # Bidding phase
         if action_idx >= NUM_BID_ACTIONS:
             return None  # Invalid action
 
-        target = action_idx // 101  # 0 for A, 1 for B
-        amount = (action_idx % 101) * 1000  # 0 to 100000 in steps of 1000
-        group = 'A' if target == 0 else 'B'
-        return Bid(group, amount)
+        # Use EXACT same encoding as training (YachtGame.py)
+        tidx = action_idx // 101  # BID_LEVELS = 101
+        aidx = action_idx % 101
+        target = "A" if tidx == 0 else "B"
+        amount = aidx * 1000  # BID_STEP = 1000, amounts 0..100000
+        return Bid(target, amount)
 
     else:  # Scoring phase
         scoring_action = action_idx - NUM_BID_ACTIONS
         if scoring_action < 0:
             return None  # Invalid action
 
-        category = scoring_action // NUM_COMB
+        category = scoring_action // NUM_COMB  # NUM_COMB = 252
         comb_idx = scoring_action % NUM_COMB
 
         if category >= NUM_CATEGORIES or comb_idx >= len(COMB_5_OF_10):
             return None  # Invalid action
 
-        # Check if category is already used
-        if game_state.my_state.rule_score[category] is not None:
+        # Check if category is already used - use training-compatible used_mask
+        if (game_state.my_state.used_mask >> category) & 1:
             return None  # Category already used
 
-        # Get dice combination
+        # Get dice combination - check against carry (like training)
         dice_indices = COMB_5_OF_10[comb_idx]
-        available_dice = game_state.my_state.dice
+        available_dice = game_state.my_state.carry  # Use carry like training
 
-        # Check if we have enough dice
+        # Check if we have enough dice and valid indices
         if len(available_dice) < 5 or max(dice_indices) >= len(available_dice):
-            return None  # Not enough dice
+            return None  # Not enough dice or invalid indices
 
         selected_dice = [available_dice[i] for i in dice_indices]
         return DicePut(DiceRule(category), selected_dice)
@@ -189,7 +190,7 @@ def _decode_action(action_idx, game_state, round_no, phase):
 class AIPlayer:
     """Neural network-based AI player"""
 
-    def __init__(self, model_path="data.bin"):
+    def __init__(self, model_path="/Users/jason/Desktop/NYPC-Yacht-Auction/yacht/submission/data.bin"):
         self.model = None
         self.load_model(model_path)
 
@@ -234,9 +235,24 @@ class AIPlayer:
             return None  # Fall back to rule-based
 
         try:
+            print(
+                f"# Debug: get_move called with round={round_no}, phase={phase}", file=sys.stderr)
+
             # Encode state
             state_vec = _encode_state(
                 game_state, round_no, phase, rollA, rollB, p1_bid, p2_bid, current_player)
+
+            print(
+                f"# Debug: State vector (first 10): {state_vec[:10]}", file=sys.stderr)
+            print(f"# Debug: Round {round_no}, Phase {phase}", file=sys.stderr)
+            print(
+                f"# Debug: My carry dice: {game_state.my_state.carry}", file=sys.stderr)
+            print(
+                f"# Debug: Opp carry dice: {game_state.opp_state.carry}", file=sys.stderr)
+            print(
+                f"# Debug: Bid scores: me={game_state.my_state.bid_score}, opp={game_state.opp_state.bid_score}", file=sys.stderr)
+            print(
+                f"# Debug: State vector round/phase features: {state_vec[:3]}", file=sys.stderr)
 
             # Get neural network prediction
             with torch.no_grad():
@@ -251,12 +267,38 @@ class AIPlayer:
                     valid_actions.append((action_idx, pi[action_idx]))
 
             if valid_actions:
+                # Sort by probability to see top choices
+                valid_actions.sort(key=lambda x: x[1], reverse=True)
+
+                # Debug: show top 5 actions during bidding
+                if phase == 0:
+                    print(f"# Debug: Top 5 bid actions:", file=sys.stderr)
+                    for i, (action_idx, prob) in enumerate(valid_actions[:5]):
+                        move = _decode_action(
+                            action_idx, game_state, round_no, phase)
+                        if isinstance(move, Bid):
+                            print(
+                                f"# Debug:   {i + 1}. Action {action_idx} -> BID {move.group} {move.amount} (prob: {prob:.6f})", file=sys.stderr)
+
                 # Select action with highest probability among valid actions
-                best_action_idx = max(valid_actions, key=lambda x: x[1])[0]
-                return _decode_action(best_action_idx, game_state, round_no, phase)
+                # Already sorted by probability
+                best_action_idx = valid_actions[0][0]
+                best_move = _decode_action(
+                    best_action_idx, game_state, round_no, phase)
+
+                if phase == 0 and isinstance(best_move, Bid):
+                    print(
+                        f"# Debug: AI chose action {best_action_idx} -> BID {best_move.group} {best_move.amount}", file=sys.stderr)
+                elif phase == 1 and isinstance(best_move, DicePut):
+                    print(
+                        f"# Debug: AI chose action {best_action_idx} -> PUT {best_move.rule.name} {best_move.dice}", file=sys.stderr)
+
+                return best_move
 
         except Exception as e:
             print(f"AI prediction error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
         return None  # Fall back to rule-based
 
@@ -314,7 +356,7 @@ class Game:
         self.rollB = dice_b
         self.phase = 0  # Bidding phase
 
-        # Try AI first
+        # AI only - no fallback
         ai_move = self.ai_player.get_move(
             self, self.round_no, self.phase, self.rollA, self.rollB,
             self.p1_bid, self.p2_bid, 1  # Assume we are player 1
@@ -323,18 +365,8 @@ class Game:
         if ai_move and isinstance(ai_move, Bid):
             return ai_move
 
-        # Fallback to rule-based strategy
-        sum_a = sum(dice_a)
-        sum_b = sum(dice_b)
-        group = "A" if sum_a > sum_b else "B"
-
-        # (내 현재 점수 - 상대 현재 점수) / 10을 0이상 100000이하로 잘라서 배팅
-        amount = (
-            self.my_state.get_total_score() - self.opp_state.get_total_score()
-        ) // 10
-        amount = max(0, min(100000, amount))
-
-        return Bid(group, amount)
+        # If AI fails, make a minimal bid to continue the game
+        return Bid("A", 0)
 
     # ============================================================================
     # 주어진 주사위에 대해 사용할 규칙과 주사위를 정하는 함수
@@ -343,7 +375,7 @@ class Game:
     def calculate_put(self) -> DicePut:
         self.phase = 1  # Scoring phase
 
-        # Try AI first
+        # AI only - no fallback
         ai_move = self.ai_player.get_move(
             self, self.round_no, self.phase, self.rollA, self.rollB,
             self.p1_bid, self.p2_bid, 1  # Assume we are player 1
@@ -352,11 +384,16 @@ class Game:
         if ai_move and isinstance(ai_move, DicePut):
             return ai_move
 
-        # Fallback to rule-based strategy
-        rule = next(
-            i for i, score in enumerate(self.my_state.rule_score) if score is None
-        )
-        dice = self.my_state.dice[:5]
+        # If AI fails, make a minimal move to continue the game
+        # Find first unused category using used_mask
+        for i in range(NUM_CATEGORIES):
+            if ((self.my_state.used_mask >> i) & 1) == 0:
+                rule = i
+                break
+        else:
+            rule = 0  # Fallback if all used (shouldn't happen)
+
+        dice = self.my_state.carry[:5]  # Use carry instead of dice
         return DicePut(DiceRule(rule), dice)
 
     # ============================== [필수 구현 끝] ==============================
@@ -374,13 +411,13 @@ class Game:
         self.p1_bid = (my_bid.group, my_bid.amount)
         self.p2_bid = (opp_bid.group, opp_bid.amount)
 
-        # 그룹에 따라 주사위 분배
+        # 그룹에 따라 주사위 분배 - I know exactly what opponent got
         if my_group == "A":
             self.my_state.add_dice(dice_a)
-            self.opp_state.add_dice(dice_b)
+            self.opp_state.add_dice(dice_b)  # Opponent got dice_b
         else:
             self.my_state.add_dice(dice_b)
-            self.opp_state.add_dice(dice_a)
+            self.opp_state.add_dice(dice_a)  # Opponent got dice_a
 
         # 입찰 결과에 따른 점수 반영
         my_bid_ok = my_bid.group == my_group
@@ -404,31 +441,26 @@ class Game:
         self.p1_bid = ('', 0)
         self.p2_bid = ('', 0)
 
-    def update_set(self, put: DicePut):
-        """상대가 주사위를 배치한 결과 반영"""
-        self.opp_state.use_dice(put)
 
-
-# 팀의 현재 상태를 관리하는 클래스
+# 팀의 현재 상태를 관리하는 클래스 - MATCHES TRAINING PlayerState EXACTLY
 class GameState:
     def __init__(self):
-        self.dice = []  # 현재 보유한 주사위 목록
-        self.rule_score: List[Optional[int]] = [
-            None
-        ] * 12  # 각 규칙별 획득 점수 (사용하지 않았다면 None)
-        self.bid_score = 0  # 입찰로 얻거나 잃은 총 점수
+        self.carry = []  # Dice carried from previous round
+        self.used_mask = 0  # 12-bit mask of used categories (matches training)
+        # Category scores (matches training)
+        self.cat_scores = [0] * NUM_CATEGORIES
+        self.bid_score = 0  # Net bidding adjustments (matches training)
+
+    @property
+    def rule_score(self):
+        """Compatibility property - convert cat_scores to rule_score format for existing code"""
+        return [self.cat_scores[i] if (self.used_mask >> i) & 1 else None for i in range(NUM_CATEGORIES)]
 
     def get_total_score(self) -> int:
         """현재까지 획득한 총 점수 계산 (상단/하단 점수 + 보너스 + 입찰 점수)"""
-        basic = bonus = combination = 0
-
-        # 기본 점수 규칙 계산 (ONE ~ SIX)
-        basic = sum(
-            score for score in self.rule_score[0:6] if score is not None)
+        basic = sum(self.cat_scores[0:6])
         bonus = 35000 if basic >= 63000 else 0
-        combination = sum(
-            score for score in self.rule_score[6:12] if score is not None)
-
+        combination = sum(self.cat_scores[6:12])
         return basic + bonus + combination + self.bid_score
 
     def bid(self, is_successful: bool, amount: int):
@@ -439,23 +471,32 @@ class GameState:
             self.bid_score += amount  # 실패시 베팅 금액만큼 점수 획득
 
     def add_dice(self, new_dice: List[int]):
-        """새로운 주사위들을 보유 목록에 추가"""
-        self.dice.extend(new_dice)
+        """새로운 주사위들을 보유 목록에 추가 - 이제 carry 시스템 사용"""
+        self.carry.extend(new_dice)
 
     def use_dice(self, put: DicePut):
-        """주사위를 사용하여 특정 규칙에 배치"""
-        # 이미 사용한 규칙인지 확인
-        assert (
-            put.rule is not None and self.rule_score[put.rule.value] is None
-        ), "Rule already used"
+        """주사위를 사용하여 특정 규칙에 배치 - matches training PlayerState exactly"""
+        # Check if category is already used
+        assert put.rule is not None, "Rule cannot be None"
+        cat_idx = put.rule.value
+        assert ((self.used_mask >> cat_idx) & 1) == 0, "Rule already used"
 
-        for d in put.dice:
-            # 주사위 목록에 있는 주사위 제거
-            self.dice.remove(d)
+        # Remove dice by values (the exact dice specified in put.dice)
+        remaining_dice = list(self.carry)
 
-        # 해당 규칙의 점수 계산 및 저장
-        assert put.rule is not None
-        self.rule_score[put.rule.value] = self.calculate_score(put)
+        # Find and remove each die from put.dice
+        for target_die in put.dice:
+            for i, die in enumerate(remaining_dice):
+                if die == target_die:
+                    remaining_dice[i] = -1  # Mark as used
+                    break
+
+        # Remove marked dice
+        self.carry = [die for die in remaining_dice if die != -1]
+
+        # Mark category as used and store score - MATCHES TRAINING
+        self.used_mask |= (1 << cat_idx)
+        self.cat_scores[cat_idx] = self.calculate_score(put)
 
     @staticmethod
     def calculate_score(put: DicePut) -> int:
@@ -542,7 +583,7 @@ def main():
                 continue
 
             if command == "ROLL":
-                # 주사위 굴리기 결과 받기
+                # 주사위 굴리기 결과 받기 - implies start of new round if we just finished scoring
                 str_a, str_b = args
                 for i, c in enumerate(str_a):
                     dice_a[i] = int(c)  # 문자를 숫자로 변환
@@ -560,6 +601,9 @@ def main():
                     dice_a, dice_b, my_bid, Bid(
                         opp_group, opp_score), get_group
                 )
+                # In round 1, there's no scoring, so advance round here
+                if game.round_no == 1:
+                    game.advance_round()
                 continue
 
             if command == "SCORE":
@@ -571,10 +615,13 @@ def main():
                 continue
 
             if command == "SET":
-                # 상대의 주사위 배치
+                # 상대의 주사위 배치 - this means both players have scored this round
                 rule, str_dice = args
                 dice = [int(c) for c in str_dice]
                 game.update_set(DicePut(DiceRule[rule], dice))
+                # After both players score, advance to next round (rounds 2-12 only)
+                if 2 <= game.round_no <= 12:
+                    game.advance_round()
                 continue
 
             if command == "FINISH":
