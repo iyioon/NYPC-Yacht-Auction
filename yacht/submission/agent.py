@@ -28,7 +28,7 @@ class ResidualBlock(nn.Module):
 
 
 class YachtNNet(nn.Module):
-    def __init__(self, input_len=59, action_size=3226, hidden=512, nblocks=8, dropout=0.2):
+    def __init__(self, input_len=59, action_size=3226, hidden=256, nblocks=6, dropout=0.3):
         super().__init__()
         self.input_len = input_len
         self.action_size = action_size
@@ -69,7 +69,7 @@ class YachtNNet(nn.Module):
 
 # Constants from YachtGame
 NUM_CATEGORIES = 12
-NUM_BID_ACTIONS = 202  # 2 targets * 101 amounts (0-100000 in steps of 1000)
+NUM_BID_ACTIONS = 202  # 2 targets * 101 amounts (0-50000 in steps of 500)
 NUM_COMB = 252  # C(10,5) combinations of selecting 5 dice from 10
 
 # Precomputed combinations for selecting 5 dice from 10
@@ -157,7 +157,7 @@ def _decode_action(action_idx, game_state, round_no, phase):
         tidx = action_idx // 101  # BID_LEVELS = 101
         aidx = action_idx % 101
         target = "A" if tidx == 0 else "B"
-        amount = aidx * 1000  # BID_STEP = 1000, amounts 0..100000
+        amount = aidx * 500  # BID_STEP = 500, amounts 0..50000
         return Bid(target, amount)
 
     else:  # Scoring phase

@@ -1,8 +1,10 @@
+#!/usr/bin/env python3
+"""
+Calculate YachtNNet model size for different configurations
+"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# Small residual MLP for vector inputs (59 -> hidden -> policy(3226), value(1))
 
 
 class ResidualBlock(nn.Module):
@@ -42,29 +44,50 @@ class YachtNNet(nn.Module):
             nn.SiLU(),
             nn.Linear(hidden, action_size),
         )
+
         # Value head
         self.v_head = nn.Sequential(
             nn.LayerNorm(hidden),
             nn.SiLU(),
-            nn.Linear(hidden, 128),
-            nn.SiLU(),
-            nn.Linear(128, 1),
+            nn.Linear(hidden, 1),
+            nn.Tanh(),
         )
 
-        self._init()
+    def forward(self, x):
+        x = self.inp(x)
+        for block in self.blocks:
+            x = block(x)
+        pi = self.pi_head(x)
+        v = self.v_head(x)
+        return torch.log_softmax(pi, dim=1), v
 
-    def _init(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
-                nn.init.zeros_(m.bias)
 
-    def forward(self, x):  # x: (B, 59) or (B, 1, 59)
-        if x.ndim == 3:
-            x = x.squeeze(1)
-        h = self.inp(x)
-        for blk in self.blocks:
-            h = blk(h)
-        pi = self.pi_head(h)              # logits
-        v = torch.tanh(self.v_head(h))    # [-1, 1]
-        return pi, v
+def calculate_model_size(hidden, nblocks):
+    model = YachtNNet(hidden=hidden, nblocks=nblocks)
+
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+
+    # Estimate size in bytes (float32 = 4 bytes per parameter)
+    size_bytes = total_params * 4
+    size_mb = size_bytes / (1024 * 1024)
+
+    return total_params, size_mb
+
+
+# Test different configurations
+configs = [
+    (256, 4),   # Small
+    (256, 6),   # Small-medium
+    (384, 6),   # Medium
+    (512, 8),   # Medium-large (original)
+    (768, 12),  # Large (current)
+    (512, 6),   # Balanced
+]
+
+print("Model Size Analysis:")
+print("=" * 50)
+for hidden, nblocks in configs:
+    params, size_mb = calculate_model_size(hidden, nblocks)
+    print(
+        f"Hidden: {hidden:3d}, Blocks: {nblocks:2d} -> {params:,} params, {size_mb:.2f} MiB")
