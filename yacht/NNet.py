@@ -1,133 +1,213 @@
-"""
-PyTorch neural network for the yacht dice game suitable for use with
-alpha-zero-general.
-
-This module defines a wrapper class around a PyTorch model.  It converts
-between the alpha-zero-general game interface and the network, handles
-loading/saving weights and performs inference.  The network architecture
-itself is kept deliberately simple; you can extend it to deeper residual
-blocks as needed.  See the report for details on designing the input and
-output sizes.
-"""
-
-from __future__ import annotations
-
 import os
-from typing import Tuple, List
+import time
+import math
 import numpy as np
+from collections import namedtuple
+
 import torch
-import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 
-from yacht.Game import Game
+from NeuralNet import NeuralNet  # repo base class
+from yacht.pytorch.YachtNNet import YachtNNet
 
-
-class Net(nn.Module):
-    def __init__(self, game: Game):
-        super().__init__()
-        # Retrieve board and action sizes from the game
-        self.board_size = game.getBoardSize()
-        self.action_size = game.getActionSize()
-        # Flatten input for a fully connected network
-        input_dim = self.board_size[0] * \
-            self.board_size[1] * self.board_size[2]
-        hidden_dim = 256
-        # A simple three‑layer MLP; feel free to increase depth and width
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        # Policy head
-        self.policy_head = nn.Linear(hidden_dim, self.action_size)
-        # Value head
-        self.value_head = nn.Linear(hidden_dim, 1)
-
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        # x has shape (batch_size, vector_length) for 1D input
-        # Ensure input is properly flattened
-        x = x.view(x.size(0), -1)
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        # Policy: logits over actions
-        policy = self.policy_head(x)
-        # Value: scalar output with tanh activation
-        value = torch.tanh(self.value_head(x))
-        return policy, value.squeeze(-1)
+# ====== default hyperparams (mirrors style used in A0G Othello) ======
 
 
-class NNetWrapper:
-    def __init__(self, game: Game) -> None:
-        self.nnet = Net(game)
+def dotdict(d): return namedtuple("DotDict", d.keys())(*d.values())
+
+
+defaultArgs = dotdict({
+    "lr": 1e-3,
+    "weight_decay": 1e-5,
+    "epochs": 10,
+    "batch_size": 128,
+    "cuda": torch.cuda.is_available(),
+    "hidden": 512,
+    "nblocks": 6,
+    "dropout": 0.2,
+})
+
+# ====== dataset for (state, pi, v) ======
+
+
+class AZDataset(Dataset):
+    def __init__(self, xs, pis, vs):
+        self.xs = xs.astype(np.float32)
+        self.pis = pis.astype(np.float32)
+        self.vs = vs.astype(np.float32).reshape(-1, 1)
+
+    def __len__(self): return len(self.xs)
+
+    def __getitem__(self, i):
+        return self.xs[i], self.pis[i], self.vs[i]
+
+# ====== state encoder (must match YachtGame.getBoardSize doc) ======
+# F = 59: [round/phase 3] + [my 10] + [opp 10] + [rollA 5] + [rollB 5] + [my used 12] + [opp used 12] + [bid 2]
+
+
+def _scale_die(d):     # 1..6 -> roughly [-0.71, 0.71]; pad -1 -> -1.0
+    return -1.0 if d < 1 else (d - 3.5) / 3.5
+
+
+def _pad_scale(dice, n):
+    arr = np.full(n, -1.0, dtype=np.float32)
+    for i, v in enumerate(dice[:n]):
+        arr[i] = _scale_die(v)
+    return arr
+
+
+def _mask_bits(mask, n):
+    return np.array([(mask >> i) & 1 for i in range(n)], dtype=np.float32)
+
+
+def state_to_vec(game, s):
+    # canonical s: p1 = me, p2 = opp
+    vec = []
+    # round/phase
+    vec.append(s.round_no / 13.0)
+    vec.append(1.0 if s.phase == 0 else 0.0)  # is_bid
+    vec.append(1.0 if s.phase == 1 else 0.0)  # is_score
+    # dice
+    vec.extend(_pad_scale(s.p1.carry, 10))
+    vec.extend(_pad_scale(s.p2.carry, 10))
+    # rolls (only present in BID rounds)
+    rollA = s.rollA if (s.phase == 0 and s.round_no != 13) else []
+    rollB = s.rollB if (s.phase == 0 and s.round_no != 13) else []
+    vec.extend(_pad_scale(rollA, 5))
+    vec.extend(_pad_scale(rollB, 5))
+    # used masks
+    vec.extend(_mask_bits(s.p1.used_mask, 12))
+    vec.extend(_mask_bits(s.p2.used_mask, 12))
+    # bid scores scaled (1e-5 keeps magnitude modest)
+    vec.append(s.p1.bid_score * 1e-5)
+    vec.append(s.p2.bid_score * 1e-5)
+    return np.asarray(vec, dtype=np.float32)
+
+# ====== wrapper ======
+
+
+class NNetWrapper(NeuralNet):
+    def __init__(self, game, args=None):
+        super().__init__(game)
         self.game = game
-        self.device = torch.device(
-            'cuda' if torch.cuda.is_available() else 'cpu')
-        self.nnet.to(self.device)
-        # Optimiser parameters (tune as needed)
-        self.lr = 0.001
-        self.batch_size = 64
-        self.loss_fn = nn.MSELoss()
-        self.optimiser = optim.Adam(self.nnet.parameters(), lr=self.lr)
+        self.args = args or defaultArgs
+        self.input_len = 59
+        self.action_size = self.game.getActionSize()
 
-    def train(self, examples: List[Tuple[np.ndarray, np.ndarray, float]]) -> None:
-        """
-        Train the network with a batch of examples.  Each example is a
-        tuple (board, pi, v) where `board` is a state representation,
-        `pi` is the target policy vector and `v` is the target value.
-        """
+        self.nnet = YachtNNet(
+            input_len=self.input_len,
+            action_size=self.action_size,
+            hidden=self.args.hidden,
+            nblocks=self.args.nblocks,
+            dropout=self.args.dropout,
+        )
+
+        if self.args.cuda:
+            self.nnet.cuda()
+        self.optimizer = optim.AdamW(self.nnet.parameters(
+        ), lr=self.args.lr, weight_decay=self.args.weight_decay)
+
+        # Add mixed precision training for better GPU utilization
+        if self.args.cuda:
+            from torch.amp import GradScaler
+            # ---- training on self-play (board, pi, v) ----
+            self.scaler = GradScaler('cuda')
+
+    def train(self, examples):
         self.nnet.train()
-        for epoch in range(10):  # number of epochs per training call
-            batch_index = 0
-            while batch_index < len(examples):
-                sample = examples[batch_index: batch_index + self.batch_size]
-                boards, pis, vs = zip(*sample)
-                # Convert boards (dict) to flat vectors
-                boards_vec = [self.game._board_to_vector(b) for b in boards]
-                boards = torch.tensor(
-                    np.array(boards_vec), dtype=torch.float32, device=self.device)
-                pis = torch.tensor(
-                    np.array(pis), dtype=torch.float32, device=self.device)
-                vs = torch.tensor(
-                    np.array(vs), dtype=torch.float32, device=self.device)
-                # Forward pass
-                out_policy, out_value = self.nnet(boards)
-                # Mask invalid moves: ensure probabilities sum to 1 over valid moves
-                # It is the caller's responsibility to zero out invalid entries in `pis`.
-                policy_loss = - \
-                    torch.mean(
-                        torch.sum(pis * torch.log_softmax(out_policy, dim=1), dim=1))
-                value_loss = self.loss_fn(out_value, vs)
-                loss = policy_loss + value_loss
-                # Backward and optimise
-                self.optimiser.zero_grad()
-                loss.backward()
-                self.optimiser.step()
-                batch_index += self.batch_size
+        xs, pis, vs = [], [], []
+        for (board, pi, v) in examples:
+            xs.append(state_to_vec(self.game, board))
+            pis.append(pi)
+            vs.append(v)
+        dataset = AZDataset(np.array(xs), np.array(pis), np.array(vs))
+        loader = DataLoader(
+            dataset, batch_size=self.args.batch_size, shuffle=True,
+            drop_last=False, num_workers=2, pin_memory=True)  # Added optimizations
 
-    def predict(self, board: np.ndarray) -> Tuple[np.ndarray, float]:
-        """
-        Given a board, predict the policy (action probabilities) and value.
-        Return a tuple (policy, value) where `policy` is a 1D numpy array
-        of length equal to the action size and `value` is a float in
-        [−1,1].  The caller must mask invalid moves using
-        `game.getValidMoves()` before acting on the policy.
-        """
+        for epoch in range(self.args.epochs):
+            total_loss = 0
+            batch_count = 0
+            for batch_x, batch_pi, batch_v in loader:
+                if self.args.cuda:
+                    batch_x, batch_pi, batch_v = batch_x.cuda(non_blocking=True), batch_pi.cuda(
+                        non_blocking=True), batch_v.cuda(non_blocking=True)
+
+                self.optimizer.zero_grad(set_to_none=True)
+
+                # Use mixed precision if CUDA is available
+                if self.args.cuda and hasattr(self, 'scaler'):
+                    from torch.amp import autocast
+                    with autocast('cuda'):
+                        out_pi, out_v = self.nnet(batch_x)
+                        loss_policy = F.cross_entropy(
+                            out_pi, torch.argmax(batch_pi, dim=1))
+                        loss_value = F.mse_loss(out_v, batch_v)
+                        loss = loss_policy + self.args.vloss_weight * loss_value
+
+                    self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.nnet.parameters(), max_norm=5.0)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    out_pi, out_v = self.nnet(batch_x)
+                    loss_policy = F.cross_entropy(
+                        out_pi, torch.argmax(batch_pi, dim=1))
+                    loss_value = F.mse_loss(out_v, batch_v)
+                    loss = loss_policy + self.args.vloss_weight * loss_value
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(
+                        self.nnet.parameters(), max_norm=5.0)
+                    self.optimizer.step()
+
+                total_loss += loss.item()
+                batch_count += 1
+
+            # Print progress every few epochs
+            if epoch % 5 == 0 or epoch == self.args.epochs - 1:
+                avg_loss = total_loss / batch_count if batch_count > 0 else 0
+                print(
+                    f"Epoch {epoch+1}/{self.args.epochs}, Avg Loss: {avg_loss:.4f}")
+
+    # ---- inference ----
+    def predict(self, board):
         self.nnet.eval()
+        x = torch.from_numpy(state_to_vec(
+            self.game, board)).unsqueeze(0).float()
+        if self.args.cuda:
+            x = x.cuda(non_blocking=True)
+
         with torch.no_grad():
-            # Convert board dict to vector
-            board_vec = self.game._board_to_vector(board)
-            board_tensor = torch.tensor(
-                board_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
-            policy, value = self.nnet(board_tensor)
-            policy = torch.softmax(policy, dim=1).cpu().numpy()[0]
-            value = value.item()
-        return policy, value
+            # Use mixed precision for inference too
+            if self.args.cuda:
+                from torch.amp import autocast
+                with autocast('cuda'):
+                    pi, v = self.nnet(x)
+            else:
+                pi, v = self.nnet(x)
 
-    def save_checkpoint(self, folder: str, filename: str) -> None:
-        """Save the network parameters to a file."""
-        filepath = os.path.join(folder, filename)
+            pi = F.log_softmax(pi, dim=1).exp().cpu().numpy()[0]  # probs
+            v = v.cpu().numpy()[0, 0]
+        return pi, v
+
+    # ---- checkpoints ----
+    def save_checkpoint(self, folder, filename):
+        path = os.path.join(folder, filename)
         os.makedirs(folder, exist_ok=True)
-        torch.save({'state_dict': self.nnet.state_dict()}, filepath)
+        torch.save({
+            "state_dict": self.nnet.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "args": dict(self.args),
+        }, path)
 
-    def load_checkpoint(self, folder: str, filename: str) -> None:
-        """Load network parameters from a file."""
-        filepath = os.path.join(folder, filename)
-        checkpoint = torch.load(filepath, map_location=self.device)
-        self.nnet.load_state_dict(checkpoint['state_dict'])
+    def load_checkpoint(self, folder, filename, load_optimizer=False):
+        path = os.path.join(folder, filename)
+        checkpoint = torch.load(
+            path, map_location="cuda" if self.args.cuda else "cpu", weights_only=False)
+        self.nnet.load_state_dict(checkpoint["state_dict"])
+        if load_optimizer and "optimizer" in checkpoint:
+            self.optimizer.load_state_dict(checkpoint["optimizer"])

@@ -38,7 +38,8 @@ class MCTS():
             self.search(canonicalBoard)
 
         s = self.game.stringRepresentation(canonicalBoard)
-        counts = [self.Nsa[(s, a)] if (s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
+        counts = [self.Nsa[(s, a)] if (
+            s, a) in self.Nsa else 0 for a in range(self.game.getActionSize())]
 
         if temp == 0:
             bestAs = np.array(np.argwhere(counts == np.max(counts))).flatten()
@@ -92,10 +93,22 @@ class MCTS():
                 # if all valid moves were masked make all valid moves equally probable
 
                 # NB! All valid moves may be masked if either your NNet architecture is insufficient or you've get overfitting or something else.
-                # If you have got dozens or hundreds of these messages you should pay attention to your NNet and/or training process.   
-                log.error("All valid moves were masked, doing a workaround.")
+                # If you have got dozens or hundreds of these messages you should pay attention to your NNet and/or training process.
+                # log.error("All valid moves were masked, doing a workaround.")
                 self.Ps[s] = self.Ps[s] + valids
-                self.Ps[s] /= np.sum(self.Ps[s])
+                sum_valid = np.sum(self.Ps[s])
+                if sum_valid > 0:
+                    self.Ps[s] /= sum_valid
+                else:
+                    # Emergency fallback: if no valid moves at all, make uniform
+                    # log.error("No valid moves found at all! Creating uniform distribution.")
+                    self.Ps[s] = valids.astype(np.float32)
+                    if np.sum(self.Ps[s]) > 0:
+                        self.Ps[s] /= np.sum(self.Ps[s])
+                    else:
+                        # Last resort: set first action to 1
+                        self.Ps[s] = np.zeros_like(valids, dtype=np.float32)
+                        self.Ps[s][0] = 1.0
 
             self.Vs[s] = valids
             self.Ns[s] = 0
@@ -110,22 +123,37 @@ class MCTS():
             if valids[a]:
                 if (s, a) in self.Qsa:
                     u = self.Qsa[(s, a)] + self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s]) / (
-                            1 + self.Nsa[(s, a)])
+                        1 + self.Nsa[(s, a)])
                 else:
-                    u = self.args.cpuct * self.Ps[s][a] * math.sqrt(self.Ns[s] + EPS)  # Q = 0 ?
+                    u = self.args.cpuct * \
+                        self.Ps[s][a] * math.sqrt(self.Ns[s] + EPS)  # Q = 0 ?
 
                 if u > cur_best:
                     cur_best = u
                     best_act = a
 
         a = best_act
+
+        # Safety check: ensure we have a valid action
+        if a == -1 or not valids[a]:
+            # log.error(f"Invalid action selected: {a}, valids sum: {np.sum(valids)}")
+            # Find first valid action as fallback
+            valid_actions = np.where(valids == 1)[0]
+            if len(valid_actions) > 0:
+                a = valid_actions[0]
+                # log.error(f"Using fallback action: {a}")
+            else:
+                # log.error("No valid actions found at all!")
+                return 0  # Return neutral value
+
         next_s, next_player = self.game.getNextState(canonicalBoard, 1, a)
         next_s = self.game.getCanonicalForm(next_s, next_player)
 
         v = self.search(next_s)
 
         if (s, a) in self.Qsa:
-            self.Qsa[(s, a)] = (self.Nsa[(s, a)] * self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
+            self.Qsa[(s, a)] = (self.Nsa[(s, a)] *
+                                self.Qsa[(s, a)] + v) / (self.Nsa[(s, a)] + 1)
             self.Nsa[(s, a)] += 1
 
         else:
