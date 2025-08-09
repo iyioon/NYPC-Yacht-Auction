@@ -52,9 +52,11 @@ class Arena():
                 assert self.display
                 print("Turn ", str(it), "Player ", str(curPlayer))
                 self.display(board)
-            action = players[curPlayer + 1](self.game.getCanonicalForm(board, curPlayer))
+            action = players[curPlayer +
+                             1](self.game.getCanonicalForm(board, curPlayer))
 
-            valids = self.game.getValidMoves(self.game.getCanonicalForm(board, curPlayer), 1)
+            valids = self.game.getValidMoves(
+                self.game.getCanonicalForm(board, curPlayer), 1)
 
             if valids[action] == 0:
                 log.error(f'Action {action} is not valid!')
@@ -72,11 +74,23 @@ class Arena():
             if hasattr(player, "endGame"):
                 player.endGame()
 
+        # Log final scores for yacht game
+        game_result = self.game.getGameEnded(board, curPlayer)
+        if hasattr(board, 'p1') and hasattr(board, 'p2'):
+            p1_score = board.p1.total_with_bonus()
+            p2_score = board.p2.total_with_bonus()
+            winner = "P1" if p1_score > p2_score else "P2" if p2_score > p1_score else "Draw"
+            log.info(
+                f"Game finished: P1={p1_score}, P2={p2_score}, Winner={winner}")
+
         if verbose:
             assert self.display
-            print("Game over: Turn ", str(it), "Result ", str(self.game.getGameEnded(board, 1)))
+            print("Game over: Turn ", str(it), "Result ", str(game_result))
+            if hasattr(board, 'p1') and hasattr(board, 'p2'):
+                print(
+                    f"Final Scores: P1={board.p1.total_with_bonus()}, P2={board.p2.total_with_bonus()}")
             self.display(board)
-        return curPlayer * self.game.getGameEnded(board, curPlayer)
+        return curPlayer * game_result
 
     def playGames(self, num, verbose=False):
         """

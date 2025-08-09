@@ -24,9 +24,9 @@ NUM_CATEGORIES = len(CATEGORIES)
 BASIC_BONUS_THRESHOLD = 63000
 BASIC_BONUS = 35000
 
-# Discretized bid amounts (0..100000 in steps of 1000)
-BID_STEP = 1000
-BID_LEVELS = 101  # 0..1000*100
+# Discretized bid amounts (0..50000 in steps of 500) - more reasonable range
+BID_STEP = 500
+BID_LEVELS = 101  # 0..500*100 = 50000 max
 BID_AMOUNTS = [i * BID_STEP for i in range(BID_LEVELS)]
 BID_TARGETS = ["A", "B"]
 NUM_BID_ACTIONS = BID_LEVELS * len(BID_TARGETS)  # 202
@@ -526,7 +526,7 @@ class YachtGame:
             else:
                 get_groups[0] = "B" if get_groups[1] == "A" else "A"
 
-        # Update bid scores (+ if you *missed* target, - if you *got* it)
+        # Update bid scores (- if you *got* target, + if you *missed* it)
         s.p1.bid_score += (-p1_amount if get_groups[0]
                            == p1_target else +p1_amount)
         s.p2.bid_score += (-p2_amount if get_groups[1]

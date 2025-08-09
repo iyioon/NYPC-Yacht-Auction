@@ -16,29 +16,30 @@ logging.basicConfig(level=logging.INFO,
 
 args = dotdict({
     'numIters': 1000,
-    'numEps': 15,              # Further reduced - much faster iterations
-    'tempThreshold': 10,       # Reduced - faster transition to exploitation
-    'updateThreshold': 0.6,    # Slightly higher - less frequent model updates
+    'numEps': 20,              # More episodes for better sampling
+    'tempThreshold': 15,       # Higher threshold for more exploration in early game
+    'updateThreshold': 0.55,   # Lower threshold for more frequent updates
     'maxlenOfQueue': 200000,
-    'numMCTSSims': 15,         # Much faster self-play
-    'arenaCompare': 5,         # Much faster model comparison
-    'cpuct': 1.0,
+    'numMCTSSims': 25,         # More MCTS simulations for better move evaluation
+    'arenaCompare': 10,        # More games for better model comparison
+    'cpuct': 1.5,              # Higher exploration constant
 
     'checkpoint': './temp/yacht/',
     'load_model': False,
     'load_folder_file': ('./temp/yacht/', 'best.pth.tar'),
     'numItersForTrainExamplesHistory': 5,  # Reduced memory usage
 
-    # NN args - Balanced for quality and speed
-    'lr': 1e-3,                # Reduced back to stable learning rate
-    'weight_decay': 1e-5,
-    'epochs': 10,              # Increased for better learning per iteration
-    'batch_size': 1024,        # Reduced from 2048 - balance speed vs GPU usage
-    'vloss_weight': 1.0,
+    # NN args - Optimized for yacht game learning
+    'lr': 2e-3,                # Higher learning rate for faster adaptation
+    # Stronger regularization to prevent overfitting to bad strategies
+    'weight_decay': 1e-4,
+    'epochs': 15,              # More epochs for better learning per iteration
+    'batch_size': 512,         # Smaller batch size for more frequent updates
+    'vloss_weight': 1.5,       # Higher value loss weight - important for position evaluation
     'cuda': torch.cuda.is_available(),
-    'hidden': 512,             # Reduced from 1536 - faster training
-    'nblocks': 8,              # Reduced from 16 - faster model
-    'dropout': 0.2,
+    'hidden': 256,             # Reduced from 768 - much smaller model size
+    'nblocks': 6,              # Reduced from 12 - keep model compact
+    'dropout': 0.3,            # Higher dropout to prevent overfitting to aggressive bidding
 })
 
 

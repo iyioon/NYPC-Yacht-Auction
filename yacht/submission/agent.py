@@ -244,7 +244,6 @@ class AIPlayer:
                 pi, v = self.model(state_tensor)
                 pi = F.softmax(pi, dim=1).cpu().numpy()[0]
 
-            # Get valid actions and select best one
             valid_actions = []
             for action_idx in range(len(pi)):
                 move = _decode_action(action_idx, game_state, round_no, phase)
